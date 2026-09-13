@@ -35,15 +35,12 @@ class FakeBulb:
         self.calls.append(("off",))
 
 
-def colortemp_state(brightness: float, kelvin: float, flash: bool = False) -> LightState:
-    return LightState(rgb=(255, 255, 255), brightness=brightness, kelvin=kelvin, flash=flash)
-
-
 def rgb_state(brightness: float, rgb: tuple[int, int, int], flash: bool = False) -> LightState:
-    return LightState(rgb=rgb, brightness=brightness, kelvin=None, flash=flash)
+    return LightState(rgb=rgb, brightness=brightness, flash=flash)
 
 
-OFF = LightState(rgb=(0, 0, 0), brightness=0, kelvin=None, flash=False)
+OFF = LightState(rgb=(0, 0, 0), brightness=0, flash=False)
+FLASH = LightState(rgb=(255, 250, 235), brightness=100, flash=True)
 INTERVAL = 1.0 / config.SEND_HZ
 
 
@@ -78,7 +75,7 @@ class TestRateLimit:
         t = 0.0
         sent = 0
         for _ in range(50):
-            if await driver.update(colortemp_state(80, 6000), now=t):
+            if await driver.update(rgb_state(80, (80, 160, 255)), now=t):
                 sent += 1
             t += 0.01  # far faster than SEND_HZ allows
         # 50 * 0.01s = 0.5s of wall time; SEND_HZ=2.0 allows at most ~2 sends in it
@@ -92,9 +89,8 @@ class TestRateLimit:
         # second must not be able to spam the bulb past its lockup point.
         bulb = FakeBulb()
         driver = BulbDriver(bulb)
-        assert await driver.update(colortemp_state(50, 5000), now=0.0) is True
-        flash = LightState(rgb=(255, 250, 235), brightness=100, kelvin=None, flash=True)
-        assert await driver.update(flash, now=0.001) is False
+        assert await driver.update(rgb_state(50, (150, 195, 255)), now=0.0) is True
+        assert await driver.update(FLASH, now=0.001) is False
         assert len(bulb.calls) == 1
 
 
@@ -106,7 +102,7 @@ class TestDedupe:
     async def test_identical_resolved_payload_is_not_resent(self):
         bulb = FakeBulb()
         driver = BulbDriver(bulb)
-        state = colortemp_state(80, 6000)
+        state = rgb_state(80, (80, 160, 255))
         assert await driver.update(state, now=0.0) is True
         assert await driver.update(state, now=INTERVAL * 2) is False
         assert len(bulb.calls) == 1
@@ -120,11 +116,12 @@ class TestEasing:
     async def test_first_update_snaps_straight_to_target(self):
         bulb = FakeBulb()
         driver = BulbDriver(bulb)
-        target = colortemp_state(80, 6000)
+        target = rgb_state(80, (80, 160, 255))
         assert await driver.update(target, now=0.0) is True
         _, params = bulb.calls[-1]
         assert params["dimming"] == wire_dimming(percent_to_raw(80, flash=False))
-        assert params["temp"] == 6000
+        r, g, b, w = split_white(80, 160, 255)
+        assert (params["r"], params["g"], params["b"], params["c"], params["w"]) == (r, g, b, w, w)
 
     @pytest.mark.asyncio
     async def test_a_large_jump_eases_in_over_several_updates_then_stops_sending(self):
@@ -133,10 +130,10 @@ class TestEasing:
         t = 0.0
         # A small but nonzero baseline — brightness=0 exactly is the "off"
         # path (tested separately below) and never touches easing at all.
-        await driver.update(colortemp_state(5, 5000), now=t)
+        await driver.update(rgb_state(5, (80, 160, 255)), now=t)
         t += INTERVAL
 
-        target = colortemp_state(100, 5000)  # raw target = RAW_MAX, a big jump
+        target = rgb_state(100, (80, 160, 255))  # raw target = RAW_MAX, a big jump
         sent = []
         for _ in range(40):
             if await driver.update(target, now=t):
@@ -149,27 +146,17 @@ class TestEasing:
         assert sent == sorted(sent), "must approach monotonically, never overshoot and bounce"
 
     @pytest.mark.asyncio
-    async def test_switching_channel_snaps_colour_but_keeps_easing_brightness(self):
-        # Colour and brightness are independent axes. There is no sensible
-        # "ease between" an RGB triple and a kelvin value, so colour snaps
-        # fresh on a channel switch — but brightness is the same continuous
-        # quantity on both paths (PilotBuilder's brightness= kwarg either
-        # way), so it keeps right on easing through the switch. That is a
-        # deliberate choice: it smooths out exactly the channel-switch
-        # brightness step flagged in TASKS.md's open questions, rather than
-        # compounding it with an extra snap.
+    async def test_colour_eases_toward_a_new_target_rather_than_snapping(self):
         bulb = FakeBulb()
         driver = BulbDriver(bulb)
         t = 0.0
-        await driver.update(rgb_state(50, (255, 152, 66)), now=t)
+        await driver.update(rgb_state(50, (255, 152, 66)), now=t)  # sunset orange
         t += INTERVAL
-        await driver.update(colortemp_state(80, 6000), now=t)
+        await driver.update(rgb_state(50, (80, 160, 255)), now=t)  # jump to noon blue
         _, params = bulb.calls[-1]
-        assert params["temp"] == 6000  # colour snapped straight to the new target
-        eased_brightness_target = percent_to_raw(80, flash=False)
-        assert params["dimming"] != wire_dimming(eased_brightness_target), (
-            "brightness should still be mid-ease this soon after a jump, not already arrived"
-        )
+        # still mid-ease toward the new colour, not already arrived
+        r, g, b, w = split_white(80, 160, 255)
+        assert (params["r"], params["g"], params["b"], params["c"], params["w"]) != (r, g, b, w, w)
 
 
 # --- rule 4: lightning bypasses both easing and dedupe ------------------------
@@ -181,10 +168,9 @@ class TestFlash:
         bulb = FakeBulb()
         driver = BulbDriver(bulb)
         t = 0.0
-        await driver.update(colortemp_state(20, 5000), now=t)
+        await driver.update(rgb_state(20, (34, 50, 126)), now=t)
         t += INTERVAL
-        flash = LightState(rgb=(255, 250, 235), brightness=100, kelvin=None, flash=True)
-        assert await driver.update(flash, now=t) is True
+        assert await driver.update(FLASH, now=t) is True
         _, params = bulb.calls[-1]
         assert params["dimming"] == wire_dimming(config.FLASH_MAX)
 
@@ -193,10 +179,9 @@ class TestFlash:
         bulb = FakeBulb()
         driver = BulbDriver(bulb)
         t = 0.0
-        flash = LightState(rgb=(255, 250, 235), brightness=100, kelvin=None, flash=True)
-        assert await driver.update(flash, now=t) is True
+        assert await driver.update(FLASH, now=t) is True
         t += INTERVAL
-        assert await driver.update(flash, now=t) is True
+        assert await driver.update(FLASH, now=t) is True
         assert len(bulb.calls) == 2
 
 
@@ -222,7 +207,7 @@ class TestOnOff:
         t = 0.0
         await driver.update(OFF, now=t)
         t += INTERVAL
-        lit = colortemp_state(80, 6000)
+        lit = rgb_state(80, (80, 160, 255))
         assert await driver.update(lit, now=t) is True
         _, params = bulb.calls[-1]
         assert params["dimming"] == wire_dimming(percent_to_raw(80, flash=False))

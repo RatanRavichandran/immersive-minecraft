@@ -124,10 +124,7 @@ async def run_simulation(use_bulb: bool) -> None:
             })
             sent = await driver.update(state)
             if sent and not use_bulb:
-                print(
-                    f"tick={tick:5d}  rgb={state.rgb}  "
-                    f"brightness={state.brightness:5.1f}  kelvin={state.kelvin}"
-                )
+                print(f"tick={tick:5d}  rgb={state.rgb}  brightness={state.brightness:5.1f}")
             await asyncio.sleep(delay)
         logger.info("simulated day complete")
     finally:

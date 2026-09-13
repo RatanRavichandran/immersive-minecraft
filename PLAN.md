@@ -96,7 +96,7 @@ minecraft-sky-sync/
         └── test_skymodel.py
 ```
 
-Keep `skymodel.py` free of I/O — pure functions from game state to `(rgb, brightness, kelvin)`. That's what makes it testable without a bulb or a running game.
+Keep `skymodel.py` free of I/O — pure functions from game state to `(rgb, brightness)`. That's what makes it testable without a bulb or a running game.
 
 ---
 
@@ -184,22 +184,37 @@ Implementation notes:
 
 24,000 ticks over 20 real minutes. Linear interpolation between keyframes, wrapping at 24,000.
 
-| Tick | RGB | Brightness (0–100) | Kelvin | Phase |
-|---|---|---|---|---|
-| 0 | 255, 140, 60 | 22 | — | first light |
-| 1000 | 205, 228, 255 | 78 | 5200 | day begins |
-| 6000 | 175, 212, 255 | 100 | 6500 | noon |
-| 11000 | 200, 215, 255 | 80 | 5000 | late afternoon |
-| 12000 | 255, 152, 66 | 50 | — | sunset |
-| 12800 | 196, 84, 92 | 20 | — | last red |
-| 13800 | 38, 48, 120 | 8 | — | night, mobs spawn |
-| 18000 | 22, 32, 96 | 5 | — | midnight |
-| 22200 | 34, 50, 126 | 8 | — | |
-| 23000 | 150, 96, 150 | 15 | — | pre-dawn violet |
-| 23600 | 255, 132, 72 | 24 | — | |
-| 24000 | 255, 140, 60 | 22 | — | wraps to 0 |
+| Tick | RGB | Brightness (0–100) | Phase |
+|---|---|---|---|
+| 0 | 255, 140, 60 | 22 | first light |
+| 1000 | 150, 195, 255 | 78 | day begins |
+| 6000 | 80, 160, 255 | 100 | noon |
+| 11000 | 140, 185, 250 | 80 | late afternoon |
+| 12000 | 255, 152, 66 | 50 | sunset |
+| 12800 | 196, 84, 92 | 20 | last red |
+| 13800 | 38, 48, 120 | 8 | night, mobs spawn |
+| 18000 | 22, 32, 96 | 5 | midnight |
+| 22200 | 34, 50, 126 | 8 | |
+| 23000 | 150, 96, 150 | 15 | pre-dawn violet |
+| 23600 | 255, 132, 72 | 24 | |
+| 24000 | 255, 140, 60 | 22 | wraps to 0 |
 
-**The kelvin column is a channel selector, not a colour.** WiZ Colors bulbs have separate white LEDs and colour LEDs, and the white ones are substantially brighter. Where kelvin is present, drive with `colortemp` so daytime is bright enough to read by. Where it's `None`, drive with `rgb` because saturation matters more than lumens. Only interpolate kelvin when both bracketing keyframes have one; otherwise the segment is RGB.
+**Colour is always RGB, at every tick, no exceptions.** The original design
+drove the daytime span through the bulb's white/colour-temperature LEDs
+instead — a `kelvin` column selected between `colortemp` (brighter, but
+achromatic) and `rgb` (dimmer, but true colour) depending on the segment.
+That made physical sense (WiZ's white LEDs really are the brighter ones)
+but the tradeoff was wrong in practice: colour-temperature can't render
+blue at all, so noon read as washed-out white instead of sky blue. Removed
+2026-09-13 per user feedback — the light should track the sky's actual
+colour through the whole cycle, full stop. The daytime RGB values above
+were also retuned at the same time: the originals (205,228,255) /
+(175,212,255) / (200,215,255) are close enough to white (~50-unit channel
+gap) that they'd have looked pale and washed out even in RGB — these
+values roughly double that gap so the hue actually reads as blue. The lost
+lumens from dropping the white-LED channel are made up in `RAW_MIN`/
+`RAW_MAX` directly (section 8) rather than with a separate per-channel
+compensation constant, since there is only one channel now.
 
 Note the compression: everything interesting happens between ticks 11,000 and 14,000 — about 2.5 real minutes. That's where tuning effort goes.
 
@@ -207,7 +222,6 @@ Note the compression: everything interesting happens between ticks 11,000 and 14
 
 - `storm = max(rain, thunder)`. Blend sky RGB toward slate `(105, 118, 135)` by `storm * 0.7`.
 - Scale brightness by `1.0 - 0.5*rain - 0.35*thunder`.
-- When `rain > 0.3` or `thunder > 0.1`, force the RGB path — storms are never clean white.
 - When `lightning > 0`: override colour to `(255, 250, 235)`, jump straight to the flash cap bypassing easing, then ease back down naturally.
 
 ### 7.3 Sky exposure and caves
@@ -222,8 +236,6 @@ exposure = skyLight / 15.0
 
 Torchlight target: colour `(255, 147, 41)`, brightness `18 * (blockLight/15) ** 0.7`. The exponent keeps a single torch feeling meaningfully lit rather than nearly black.
 
-Force the RGB path when `exposure <= 0.7`.
-
 This blend handles the interesting middle cases for free — a tree canopy, a doorway, a cave mouth at sunset. Walking out of a mine into an orange sunset should have no visible seam.
 
 **Deliberate behaviour:** `blockLight == 0` and `exposure == 0` is a genuinely unlit cave, and the bulb turns off. The room goes dark exactly when the game does. If that proves too aggressive, raise the torchlight floor rather than special-casing it.
@@ -232,10 +244,10 @@ This blend handles the interesting middle cases for free — a tree canopy, a do
 
 Nether and End have no sky light anywhere, so the cave blend would black them out. Bypass the overworld path entirely:
 
-| Dimension | RGB | Brightness | Channel |
-|---|---|---|---|
-| `minecraft:the_nether` | 190, 62, 28 | 30 | RGB |
-| `minecraft:the_end` | 58, 30, 82 | 11 | RGB |
+| Dimension | RGB | Brightness |
+|---|---|---|
+| `minecraft:the_nether` | 190, 62, 28 | 30 |
+| `minecraft:the_end` | 58, 30, 82 | 11 |
 
 ---
 
@@ -247,17 +259,25 @@ Lives in `config.py`. First thing to tune; sets the dynamic range everything els
 
 | Constant | Value | Meaning |
 |---|---|---|
-| `RAW_MIN` | 30 | Night / unlit-cave floor, in pywizlight's 0–255 units |
-| `RAW_MAX` | 185 | Noon |
-| `FLASH_MAX` | 130 | Lightning cap |
+| `RAW_MIN` | 39 | Night / unlit-cave floor, in pywizlight's 0–255 units |
+| `RAW_MAX` | 240 | Noon |
+| `FLASH_MAX` | 169 | Lightning cap |
 | `SEND_HZ` | 2.0 | Bulb updates per second |
 | `EASE` | 0.22 | Exponential easing factor, 0–1. Lower is smoother and laggier |
 
+`RAW_MIN`/`RAW_MAX`/`FLASH_MAX` were bumped +30% from their original
+30/185/130 on 2026-09-13 per user feedback ("increase the base brightness
+by 30% or so") — this also absorbs the lumens lost by dropping the
+white-LED colour-temperature channel (section 7.1). If `RAW_MAX` ever
+needs to come back down, that original margin below 255 (a dark-adapted
+eye finds full brightness uncomfortable) is the first thing to give back,
+not `RAW_MIN`.
+
 Reasoning to preserve when editing:
 
-- `RAW_MIN = 30` is a **hardware floor, not taste.** WiZ ignores brightness below roughly 25, so anything lower reads as off. Don't "clean this up" to 0.
-- `RAW_MAX = 185` rather than 255 because a dark-adapted eye finds 255 uncomfortable.
-- `FLASH_MAX = 130` because a full-white flash in a dark room stops being fun around the third thunderstorm.
+- `RAW_MIN` is a **hardware floor, not taste.** WiZ ignores brightness below roughly 25, so anything lower reads as off. Don't "clean this up" to 0.
+- `RAW_MAX` is deliberately under 255 because a dark-adapted eye finds full brightness uncomfortable — currently spending less of that margin than the original design did, per the brightness bump above.
+- `FLASH_MAX` is lower than `RAW_MAX` because a full-white flash in a dark room stops being fun around the third thunderstorm.
 
 ### Rate limiting
 

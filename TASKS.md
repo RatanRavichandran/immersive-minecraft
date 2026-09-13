@@ -186,8 +186,10 @@ Verified end to end through pywizlight, not just raw UDP:
 | `rgb=(255,147,41), brightness=46` | torch orange |
 | `turn_off()` then restore | clean |
 
-Both channels the sky model needs — `colortemp` for day, `rgb` for everything
-else — are confirmed working on real hardware.
+Both channels were confirmed working on real hardware here. The `colortemp`
+one is historical now — 2026-09-13's decision (Task 2.3) dropped it from
+the sky model entirely in favour of always driving RGB. `discover` and the
+`rgb`/`turn_off` results above are still exactly how the bulb is driven.
 
 **Acceptance criteria:**
 - [x] `discover` returns the bulb's IP
@@ -312,14 +314,22 @@ the pipe is sound.
 ### Task 2.3: Sky keyframes and interpolation — pure
 
 **Description:** `skymodel.py`. The PLAN.md §7.1 keyframe table, linear
-interpolation wrapping at 24000, returning `(rgb, brightness, kelvin|None)`.
-Kelvin interpolates **only when both bracketing keyframes carry one**;
-otherwise the segment is RGB. No I/O in this module, ever.
+interpolation wrapping at 24000, returning `(rgb, brightness)`. No I/O in
+this module, ever.
+
+**2026-09-13 revision:** the original design had a fourth column, `kelvin`,
+that switched daytime onto the bulb's white/colour-temperature LEDs for
+extra brightness. Dropped per user feedback — colour-temperature can't
+render blue at all, so noon read as washed-out white instead of sky blue.
+Colour is now always RGB, and the daytime keyframes were retuned to a more
+saturated blue at the same time (the originals were pale enough to look
+washed out even in RGB). See PLAN.md §7.1 for the full writeup and
+`config.py`'s +30% brightness bump that absorbs the lost white-LED lumens.
 
 **Acceptance criteria:**
-- [ ] Every keyframe tick returns its exact table row
-- [ ] `tick=24000` and `tick=0` return identical values
-- [ ] Segments with a `None` endpoint return `kelvin=None`
+- [x] Every keyframe tick returns its exact table row
+- [x] `tick=24000` and `tick=0` return identical values
+- [x] Daytime (1000-11000) is distinctly blue, not pale/washed out
 
 **Verification:** `pytest tests/test_skymodel.py -k keyframe`
 
@@ -332,13 +342,15 @@ needed — implementable while the Wi-Fi gate is still blocked.
 
 **Description:** PLAN.md §7.2. `storm = max(rain, thunder)`; blend RGB toward
 slate `(105,118,135)` by `storm*0.7`; scale brightness by
-`1 - 0.5*rain - 0.35*thunder`; force RGB when `rain>0.3 or thunder>0.1`;
-lightning overrides colour to `(255,250,235)` and flags bypass-easing.
+`1 - 0.5*rain - 0.35*thunder`; lightning overrides colour to `(255,250,235)`
+and flags bypass-easing. (The original "force RGB above a rain/thunder
+threshold" rule no longer applies — see Task 2.3's 2026-09-13 revision;
+everything is RGB already.)
 
 **Acceptance criteria:**
-- [ ] `rain=thunder=0` is a no-op against Task 2.3 output
-- [ ] `rain=1.0` desaturates toward slate and returns `kelvin=None`
-- [ ] Lightning sets a `flash` flag the driver can read
+- [x] `rain=thunder=0` is a no-op against Task 2.3 output
+- [x] `rain=1.0` desaturates toward slate
+- [x] Lightning sets a `flash` flag the driver can read
 
 **Verification:** `pytest -k weather`
 
@@ -395,13 +407,18 @@ bulb and no running game.
 - [x] A deliberately corrupted keyframe makes the test fail (verify the test
       actually bites)
 
-**Status: done, 226 tests total across the bridge.** The sweep caught a real
-bug on its first run: at tick 11000 exactly — the shared boundary between
-the kelvin segment `[6000,11000]` and the forced-RGB segment `[11000,12000]`
-— interpolating via "which segment starts here" silently picked the RGB
-segment and dropped that keyframe's own `kelvin=5000`. Fixed by looking up
-an exact keyframe tick directly rather than interpolating into it; see
-`skymodel.sky_at_tick`'s docstring.
+**Status: done, 117 tests total across the bridge** (was 226 before the
+2026-09-13 kelvin removal cut a large parametrized block). The sweep caught
+a real bug on its first run: at tick 11000 exactly — the shared boundary
+between what was then a kelvin segment `[6000,11000]` and a forced-RGB
+segment `[11000,12000]` — interpolating via "which segment starts here"
+silently picked the RGB segment and dropped that keyframe's own kelvin.
+Fixed by looking up an exact keyframe tick directly rather than
+interpolating into it. That exact-lookup is no longer load-bearing now that
+kelvin is gone (no two segments can disagree at a shared boundary when
+both sides are continuous RGB/brightness), but it's harmless and still
+guarantees bit-exact table rows, so it stayed; see `skymodel.sky_at_tick`'s
+docstring.
 
 **Verification:** `pytest tests/test_skymodel.py`
 
@@ -493,16 +510,29 @@ Ctrl+C cleanly.
 
 ---
 
-### Task 1.3: Real telemetry — M3
+### Task 1.3: Real telemetry — M3 — **mostly verified 2026-09-13**
 
 **Description:** Replace the placeholder payload with the nine real fields from
 PLAN.md §6. Guard `client.world == null` and `client.player == null` — both are
 null on the title screen and during world load.
 
+Every yarn-mapped method used (`getTimeOfDay`, `getRainGradient`,
+`getThunderGradient`, `getLightningTicksLeft`, `getLightLevel(LightType,
+BlockPos)`, `getSkyColor`, `getRegistryKey().getValue()`) was confirmed
+against the actual 1.21.1 remapped jar via `javap` before writing any code,
+per PLAN.md §11's warning about mapping drift — compiled clean on the
+first attempt.
+
 **Acceptance criteria:**
-- [ ] All nine fields present and correctly typed
-- [ ] Title screen sends nothing and logs nothing — no null-guard spam
-- [ ] `skyLight` is emitted raw 0–15 and is **never** used as brightness
+- [x] All nine fields present and correctly typed — confirmed live:
+      `{'tick': 12200, 'rain': 0.0, 'thunder': 0.0, 'lightning': 0,
+      'skyLight': 15, 'blockLight': 0, 'y': 63, 'skyColor': 6588626,
+      'dimension': 'minecraft:overworld'}`, and `tick` tracked
+      `/time set` exactly (held correctly while `doDaylightCycle` was off)
+- [x] Title screen sends nothing and logs nothing — no null-guard spam
+- [ ] `skyLight` is emitted raw 0–15 and is **never** used as brightness —
+      field itself confirmed present and in-range; still need `/weather
+      thunder` and a dig-down to see rain/thunder/blockLight actually move
 
 **Verification:** with the bridge printing, run `/time set 18000`,
 `/weather thunder`, and dig down. Watch the fields change.
@@ -511,12 +541,14 @@ null on the title screen and during world load.
 
 ---
 
-### CHECKPOINT: Components
+### CHECKPOINT: Components — **PASSED 2026-09-13**
 
-- [ ] `pytest` green across the whole model
-- [ ] `./gradlew build` clean
-- [ ] Real telemetry visibly correct in the bridge terminal
-- [ ] Review before wiring the bulb to live game data
+- [x] `pytest` green across the whole model
+- [x] `./gradlew build` clean
+- [x] Real telemetry visibly correct in the bridge terminal — confirmed
+      `/time set 6000`/`/time set 12200` landed exactly as `tick` in the
+      packets, correctly held while `doDaylightCycle` was off
+- [x] Review before wiring the bulb to live game data
 
 ---
 
@@ -525,8 +557,10 @@ null on the title screen and during world load.
 ### Task 3.1: Overworld cycle drives the bulb — M5
 
 **Acceptance criteria:**
-- [ ] `/time set 6000` gives bright daylight on the colortemp channel
-- [ ] `/time set 12000` gives sunset orange on the RGB channel
+- [ ] `/time set 6000` gives a bright, distinctly blue noon (RGB — see
+      Task 2.3's 2026-09-13 revision, there is no separate colortemp
+      channel any more)
+- [ ] `/time set 12000` gives sunset orange
 - [ ] No visible stepping at 2 Hz — easing reads as continuous
 
 **Dependencies:** 2.10, 1.3. **Scope:** S (integration only).
@@ -576,15 +610,18 @@ special-casing the cave path.
 **Description:** Dark room, bulb bounced off a wall behind the monitor
 (PLAN.md §12). Tune `RAW_MAX` and `RAW_MIN` **before touching any keyframe
 colour** — colours are far easier to judge once the brightness envelope fits
-the room. Use `--simulate` for fast loops, then confirm with one real 20-minute
-day. Also measure the channel-step problem (see Open Questions) and add a
-compensation constant if it is visible.
+the room. Use `--simulate` for fast loops, then confirm with one real
+20-minute day. Starting point is already 30% brighter than the original
+design (per 2026-09-13 user feedback) — the old colortemp/RGB channel-step
+problem this task used to also check for no longer applies (Task 2.3
+removed the second channel entirely).
 
 **Acceptance criteria:**
 - [ ] `RAW_MAX` is comfortable at noon in a dark room; `RAW_MIN` is visibly
       not-off at midnight
 - [ ] Sunset ramp 11500 to 12200 to 12800 to 13500 reads as continuous
-- [ ] Any colortemp/RGB channel step is either imperceptible or compensated
+- [ ] Daytime blue saturation feels right for the room, not oversaturated
+      or washed out — Task 2.3's retuned values are a first pass
 
 **Dependencies:** 3.4. **Scope:** tuning, `config.py` only.
 
@@ -643,25 +680,21 @@ command forms, and the recorded calibration values with the reasoning intact.
 | Yarn mapping names shifted in 1.21.x | Med | Check Linkie for the equivalent rather than guessing (PLAN.md §11) |
 | `pywizlight` lacks 3.14 wheels | Med | Pin the venv to 3.13 (Deviation 2) |
 | Bulb locks up from packet spam | Med | Rate limiter is in Task 2.8's acceptance criteria, written before the bulb is ever driven live |
-| colortemp/RGB channel step is visible | Med | Measured in Task 3.5; compensation constant if needed |
+| ~~colortemp/RGB channel step is visible~~ | Resolved | Removed the colortemp channel entirely 2026-09-13 (Task 2.3) rather than compensate for it |
 | Cave transition feels sluggish vs the 2s target | Low | Raise `EASE`; do not special-case the cave path |
 | No B22 socket on hand | **High — blocks everything physical** | Physical check today; Tracks A and B still proceed without it |
 
 ## Open questions
 
-1. **Channel-switch brightness step — the one real gap in the design.**
-   PLAN.md §7.1 is explicit that WiZ white LEDs are substantially brighter than
-   the colour LEDs. But the model switches channels mid-cycle: colortemp on
-   [1000, 11000], RGB either side. So at tick 11000, and again whenever
-   `rain>0.3` forces the RGB path at noon, brightness jumps even though every
-   number in the table is "correct". The continuity test in Task 2.7 will not
-   catch this — it tests the model's numbers, and the numbers are fine; the
-   step is in the hardware.
-
-   Proposed fix: measure the perceived brightness ratio between the two
-   channels at equal raw value during Task 3.5, add
-   `RGB_BRIGHTNESS_COMPENSATION` to `config.py`, and apply it on the RGB path.
-   Cheap, and it keeps the keyframe table untouched.
+1. **~~Channel-switch brightness step~~ — resolved 2026-09-13.** The
+   original design switched daytime onto the bulb's white/colour-temperature
+   LEDs for extra brightness, which meant a real brightness (and, worse,
+   colour) step at tick 11000 and whenever weather forced the RGB path.
+   Rather than compensate for the step, it was removed outright per user
+   feedback: colour is now always RGB, so there is no second channel to
+   disagree with the first. The lost lumens are absorbed by the +30%
+   `RAW_MIN`/`RAW_MAX`/`FLASH_MAX` bump in `config.py` instead of a
+   per-channel compensation constant. See PLAN.md §7.1 and Task 2.3.
 
 2. **Is the unlit-cave blackout right?** PLAN.md §7.3 calls it deliberate and
    says to raise the torchlight floor rather than special-case it if it proves

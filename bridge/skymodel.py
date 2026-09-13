@@ -8,12 +8,19 @@ Pipeline, in order (resolve() at the bottom wires it all together):
     keyframes (7.1) -> weather (7.2) -> exposure/cave blend (7.3)
 
 ...with dimensions (7.4) bypassing all three entirely when applicable.
+
+Colour is always RGB, at every tick, no exceptions. An earlier version
+switched daytime to the bulb's white/colour-temperature LEDs for extra
+brightness — that channel is physically incapable of true blue, so noon
+read as washed-out white instead of sky blue. Removed 2026-09-13 per user
+feedback: the light should track the sky's actual colour through the whole
+cycle. See PLAN.md section 7.1 for the fuller writeup.
 """
 
 from __future__ import annotations
 
 import bisect
-from typing import NamedTuple, Optional
+from typing import NamedTuple
 
 Rgb = tuple[int, int, int]
 
@@ -28,7 +35,6 @@ class LightState(NamedTuple):
 
     rgb: Rgb
     brightness: float
-    kelvin: Optional[float]  # None means "drive the RGB channel"
     flash: bool  # True during a lightning strike: bypass easing/dedupe
 
 
@@ -50,25 +56,32 @@ def _lerp_rgb(a: Rgb, b: Rgb, t: float) -> Rgb:
 
 # --- 7.1 Keyframes -------------------------------------------------------
 
-# (tick, rgb, brightness 0-100, kelvin or None). PLAN.md section 7.1,
-# transcribed verbatim. The kelvin column is a channel selector, not a
-# colour: only interpolate it when BOTH bracketing keyframes carry one,
-# otherwise the segment is RGB (PLAN.md is explicit about this). The final
-# row is tick 24000, identical to tick 0 — it exists so the wrap is just
-# another segment, not a special case.
-KEYFRAMES: list[tuple[int, Rgb, float, Optional[float]]] = [
-    (0, (255, 140, 60), 22, None),  # first light
-    (1000, (205, 228, 255), 78, 5200),  # day begins
-    (6000, (175, 212, 255), 100, 6500),  # noon
-    (11000, (200, 215, 255), 80, 5000),  # late afternoon
-    (12000, (255, 152, 66), 50, None),  # sunset
-    (12800, (196, 84, 92), 20, None),  # last red
-    (13800, (38, 48, 120), 8, None),  # night, mobs spawn
-    (18000, (22, 32, 96), 5, None),  # midnight
-    (22200, (34, 50, 126), 8, None),
-    (23000, (150, 96, 150), 15, None),  # pre-dawn violet
-    (23600, (255, 132, 72), 24, None),
-    (24000, (255, 140, 60), 22, None),  # wraps to 0
+# (tick, rgb, brightness 0-100). The final row is tick 24000, identical to
+# tick 0 — it exists so the wrap is just another segment, not a special
+# case.
+#
+# The daytime span (1000-11000) was retuned 2026-09-13: the original values
+# here (205,228,255) / (175,212,255) / (200,215,255) are so close to white
+# (a ~50-unit gap between the highest and lowest channel) that they read as
+# pale white-ish on an RGB LED rather than sky blue — a colour this
+# desaturated needs the extra lumens of a dedicated white LED to look
+# intentional, which is exactly the channel this file no longer uses. The
+# new values keep the same brightening-then-warming arc but roughly double
+# the blue/red channel gap so the hue actually reads as blue. Revisit
+# during Task 3.5 calibration if it's too saturated for the room.
+KEYFRAMES: list[tuple[int, Rgb, float]] = [
+    (0, (255, 140, 60), 22),  # first light
+    (1000, (150, 195, 255), 78),  # day begins
+    (6000, (80, 160, 255), 100),  # noon — peak sky blue
+    (11000, (140, 185, 250), 80),  # late afternoon, warming back down
+    (12000, (255, 152, 66), 50),  # sunset
+    (12800, (196, 84, 92), 20),  # last red
+    (13800, (38, 48, 120), 8),  # night, mobs spawn
+    (18000, (22, 32, 96), 5),  # midnight
+    (22200, (34, 50, 126), 8),
+    (23000, (150, 96, 150), 15),  # pre-dawn violet
+    (23600, (255, 132, 72), 24),
+    (24000, (255, 140, 60), 22),  # wraps to 0
 ]
 
 _KEYFRAME_TICKS = [k[0] for k in KEYFRAMES]
@@ -81,31 +94,29 @@ def sky_at_tick(tick: int) -> LightState:
     the function Task 2.7's continuity sweep tests directly.
 
     A tick that lands exactly on a keyframe is looked up directly rather
-    than interpolated. It has to be a special case: two segments meet at
-    that instant (e.g. tick 11000 is both the end of a kelvin segment and
-    the start of a forced-RGB one), and reaching it via interpolation picks
-    whichever segment happens to come after it, silently dropping that
-    keyframe's own kelvin. A direct lookup has no such ambiguity.
+    than interpolated, purely to keep table rows bit-exact (no float
+    rounding drift) — not load-bearing for correctness the way it used to
+    be back when kelvin made the two neighbouring segments genuinely
+    disagree at the boundary.
     """
     tick = tick % 24000
 
     exact = _KEYFRAME_BY_TICK.get(tick)
     if exact is not None:
-        _, rgb, brightness, kelvin = exact
-        return LightState(rgb=rgb, brightness=brightness, kelvin=kelvin, flash=False)
+        _, rgb, brightness = exact
+        return LightState(rgb=rgb, brightness=brightness, flash=False)
 
     idx = bisect.bisect_right(_KEYFRAME_TICKS, tick) - 1
     idx = max(0, min(idx, len(KEYFRAMES) - 2))
-    t0, rgb0, b0, k0 = KEYFRAMES[idx]
-    t1, rgb1, b1, k1 = KEYFRAMES[idx + 1]
+    t0, rgb0, b0 = KEYFRAMES[idx]
+    t1, rgb1, b1 = KEYFRAMES[idx + 1]
 
     t = (tick - t0) / (t1 - t0)
 
     rgb = _lerp_rgb(rgb0, rgb1, t)
     brightness = _lerp(b0, b1, t)
-    kelvin = _lerp(k0, k1, t) if (k0 is not None and k1 is not None) else None
 
-    return LightState(rgb=rgb, brightness=brightness, kelvin=kelvin, flash=False)
+    return LightState(rgb=rgb, brightness=brightness, flash=False)
 
 
 # --- 7.2 Weather -----------------------------------------------------------
@@ -126,17 +137,14 @@ def apply_weather(sky: LightState, rain: float, thunder: float, lightning: int) 
 
     rgb = _lerp_rgb(sky.rgb, _STORM_RGB, storm * 0.7)
     brightness = _clamp(sky.brightness * (1.0 - 0.5 * rain - 0.35 * thunder), 0.0, 100.0)
-    kelvin = sky.kelvin
-    if rain > 0.3 or thunder > 0.1:
-        kelvin = None  # storms are never clean white — force the RGB path
 
     if lightning > 0:
         # Full override: a flash reads the same regardless of how heavy the
         # storm already was. The exposure blend below still dilutes this
         # toward torchlight if you're not actually under open sky.
-        return LightState(rgb=_LIGHTNING_RGB, brightness=_LIGHTNING_BRIGHTNESS, kelvin=None, flash=True)
+        return LightState(rgb=_LIGHTNING_RGB, brightness=_LIGHTNING_BRIGHTNESS, flash=True)
 
-    return LightState(rgb=rgb, brightness=brightness, kelvin=kelvin, flash=False)
+    return LightState(rgb=rgb, brightness=brightness, flash=False)
 
 
 # --- 7.3 Sky exposure and caves --------------------------------------------
@@ -159,25 +167,21 @@ def apply_exposure(weathered: LightState, sky_light: int, block_light: int) -> L
     block_light = max(0, min(15, block_light))
 
     torch_brightness = 18.0 * (block_light / 15.0) ** 0.7
-    torch = LightState(rgb=_TORCH_RGB, brightness=torch_brightness, kelvin=None, flash=False)
+    torch = LightState(rgb=_TORCH_RGB, brightness=torch_brightness, flash=False)
 
     rgb = _lerp_rgb(torch.rgb, weathered.rgb, exposure)
     brightness = _lerp(torch.brightness, weathered.brightness, exposure)
 
-    kelvin = weathered.kelvin
-    if exposure <= 0.7:
-        kelvin = None  # force the RGB path — see PLAN.md section 7.3
-
     # flash propagates unconditionally: at low exposure the blended colour
     # is already mostly/fully torch, so bypassing easing for it is at worst
     # a no-op, never a visible artifact.
-    return LightState(rgb=rgb, brightness=brightness, kelvin=kelvin, flash=weathered.flash)
+    return LightState(rgb=rgb, brightness=brightness, flash=weathered.flash)
 
 
 # --- 7.4 Dimensions ---------------------------------------------------------
 
-_NETHER = LightState(rgb=(190, 62, 28), brightness=30, kelvin=None, flash=False)
-_END = LightState(rgb=(58, 30, 82), brightness=11, kelvin=None, flash=False)
+_NETHER = LightState(rgb=(190, 62, 28), brightness=30, flash=False)
+_END = LightState(rgb=(58, 30, 82), brightness=11, flash=False)
 
 _DIMENSION_OVERRIDES = {
     "minecraft:the_nether": _NETHER,

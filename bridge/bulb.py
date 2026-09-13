@@ -11,6 +11,9 @@ Five rules, enforced here in this order:
   5. Track on/off state so turn_off() fires once at the transition, not
      repeatedly — this falls out of rule 3 for free, since a repeated
      "off" resolves to the same payload as the one already sent.
+
+Always drives the rgbww= channel — see skymodel.py's module docstring for
+why there is no longer a colour-temperature path to choose between.
 """
 
 from __future__ import annotations
@@ -72,7 +75,6 @@ class _Payload:
 
     on: bool
     raw_brightness: int
-    kelvin: Optional[int] = None
     rgb: Optional[tuple[int, int, int]] = None
 
 
@@ -87,12 +89,12 @@ def _wire_equivalent(payload: _Payload) -> tuple:
     convergence can all round to the same byte on the wire — sending each
     of those would be exactly the redundant traffic PLAN.md section 8 wants
     dedupe to suppress ("a stable afternoon should produce almost no
-    traffic"). The rgb/rgbww channel values themselves are NOT quantized
-    this way (pywizlight sends them as given), only the brightness kwarg is.
+    traffic"). The rgbww channel values themselves are NOT quantized this
+    way (pywizlight sends them as given), only the brightness kwarg is.
     """
     if not payload.on:
         return (False,)
-    return (True, hex_to_percent(payload.raw_brightness), payload.kelvin, payload.rgb)
+    return (True, hex_to_percent(payload.raw_brightness), payload.rgb)
 
 
 class BulbDriver:
@@ -112,7 +114,6 @@ class BulbDriver:
         self._last_sent: Optional[_Payload] = None
         self._eased_brightness: Optional[float] = None
         self._eased_rgb: Optional[tuple[float, float, float]] = None
-        self._eased_kelvin: Optional[float] = None
 
     async def update(self, state: LightState, *, now: Optional[float] = None) -> bool:
         """Feed one resolved LightState in. Returns True if a UDP send
@@ -125,10 +126,6 @@ class BulbDriver:
             return await self._maybe_send(_OFF, now, bypass_dedupe=False)
 
         target_brightness = percent_to_raw(state.brightness, flash=state.flash)
-        if state.kelvin is None:
-            target_brightness = int(round(
-                max(0.0, min(255.0, target_brightness * config.RGB_BRIGHTNESS_COMPENSATION))
-            ))
 
         if state.flash:
             # Rule 4: snap straight to target, no easing. Also clear the
@@ -136,34 +133,19 @@ class BulbDriver:
             # here rather than from wherever the bulb was before the
             # flash interrupted it.
             brightness = float(target_brightness)
-            if state.kelvin is None:
-                rgb: Optional[tuple[float, float, float]] = tuple(float(c) for c in state.rgb)
-                kelvin: Optional[float] = None
-            else:
-                rgb = None
-                kelvin = float(state.kelvin)
+            rgb: tuple[float, float, float] = tuple(float(c) for c in state.rgb)
             self._eased_brightness = None
             self._eased_rgb = None
-            self._eased_kelvin = None
         else:
             brightness = self._ease(self._eased_brightness, target_brightness)
             self._eased_brightness = brightness
-            if state.kelvin is not None:
-                kelvin = self._ease(self._eased_kelvin, state.kelvin)
-                self._eased_kelvin = kelvin
-                self._eased_rgb = None
-                rgb = None
-            else:
-                rgb = self._ease_rgb(state.rgb)
-                self._eased_rgb = rgb
-                self._eased_kelvin = None
-                kelvin = None
+            rgb = self._ease_rgb(state.rgb)
+            self._eased_rgb = rgb
 
         payload = _Payload(
             on=True,
             raw_brightness=int(round(brightness)),
-            kelvin=int(round(kelvin)) if kelvin is not None else None,
-            rgb=tuple(int(round(c)) for c in rgb) if rgb is not None else None,
+            rgb=tuple(int(round(c)) for c in rgb),
         )
         return await self._maybe_send(payload, now, bypass_dedupe=state.flash)
 
@@ -195,17 +177,13 @@ class BulbDriver:
             return False  # rule 1 — a hard ceiling, applies even to flashes
 
         if payload.on:
-            if payload.rgb is not None:
-                r, g, b, w = split_white(*payload.rgb)
-                pilot = PilotBuilder(rgbww=(r, g, b, w, w), brightness=payload.raw_brightness)
-            else:
-                pilot = PilotBuilder(colortemp=payload.kelvin, brightness=payload.raw_brightness)
+            r, g, b, w = split_white(*payload.rgb)
+            pilot = PilotBuilder(rgbww=(r, g, b, w, w), brightness=payload.raw_brightness)
             await self._bulb.turn_on(pilot)
         else:
             await self._bulb.turn_off()
             self._eased_brightness = None
             self._eased_rgb = None
-            self._eased_kelvin = None
 
         self._last_send_at = now
         self._last_sent = payload

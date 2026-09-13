@@ -19,21 +19,25 @@ LISTEN_PORT = 25566
 
 # --- Calibration: dark room (PLAN.md section 8) -------------------------
 
+# All three brightness constants below were bumped +30% on 2026-09-13 per
+# user feedback ("increase the base brightness by 30% or so") from the
+# original 30/185/130. That undoes some of the original 255-is-uncomfortable
+# margin PLAN.md section 8 built in — if RAW_MAX starts feeling too hot for
+# the room, that margin is the first thing to give back, not RAW_MIN.
+
 # Night / unlit-cave floor, in pywizlight's 0-255 raw brightness units.
 # This is a HARDWARE FLOOR, not taste: WiZ ignores brightness below
 # roughly 25, so anything lower just reads as off. Do not "clean this up"
 # to 0 — it will make the midnight and cave states silently do nothing.
-RAW_MIN = 30
+RAW_MIN = 39
 
-# Noon brightness, out of 255. Deliberately well under 255 (not the max
-# the hardware supports) because a dark-adapted eye finds 255 uncomfortable
-# in a dark room. Tune this first, before any keyframe colour.
-RAW_MAX = 185
+# Noon brightness, out of 255. Tune this first, before any keyframe colour.
+RAW_MAX = 240
 
 # Lightning-flash brightness cap, out of 255. Lower than RAW_MAX on
 # purpose: a full-white flash in a dark room stops being fun around the
 # third thunderstorm (PLAN.md section 8).
-FLASH_MAX = 130
+FLASH_MAX = 169
 
 # Bulb updates per second. WiZ bulbs drop packets above roughly 10-15
 # commands/sec and can lock up until power-cycled — this is the hard
@@ -47,11 +51,3 @@ SEND_HZ = 2.0
 # Raise this before adding any cave-specific special case (PLAN.md
 # section 7.3 / TASKS.md Task 3.3).
 EASE = 0.22
-
-# Perceived-brightness compensation for the RGB channel path, applied so
-# it doesn't look dimmer than the colour-temperature path at an equal raw
-# value (PLAN.md section 7.1: the white LEDs are substantially brighter
-# than the colour LEDs). 1.0 = no compensation, i.e. unmeasured. Measure
-# and set this during Task 3.5 calibration; see TASKS.md "Open questions"
-# item 1 for why it exists and how to measure it.
-RGB_BRIGHTNESS_COMPENSATION = 1.0

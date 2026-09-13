@@ -21,14 +21,13 @@ from skymodel import (
 
 
 class TestKeyframes:
-    @pytest.mark.parametrize("tick,rgb,brightness,kelvin", KEYFRAMES)
-    def test_exact_keyframe_ticks_return_the_table_row(self, tick, rgb, brightness, kelvin):
+    @pytest.mark.parametrize("tick,rgb,brightness", KEYFRAMES)
+    def test_exact_keyframe_ticks_return_the_table_row(self, tick, rgb, brightness):
         # tick 24000 wraps to 0 inside sky_at_tick, and the 24000 row is
         # identical to the 0 row anyway, so this covers both.
         state = sky_at_tick(tick)
         assert state.rgb == rgb
         assert state.brightness == pytest.approx(brightness)
-        assert state.kelvin == (pytest.approx(kelvin) if kelvin is not None else None)
 
     def test_tick_24000_and_tick_0_are_identical(self):
         assert sky_at_tick(24000) == sky_at_tick(0)
@@ -37,25 +36,12 @@ class TestKeyframes:
         assert sky_at_tick(24000 + 500) == sky_at_tick(500)
 
     @pytest.mark.parametrize("tick", range(1000, 11000, 137))
-    def test_kelvin_present_inside_the_colortemp_range(self, tick):
-        # [1000,6000] and [6000,11000] both have a kelvin on both bracketing
-        # keyframes, so the whole [1000,11000] span should carry one.
-        assert sky_at_tick(tick).kelvin is not None
-
-    @pytest.mark.parametrize(
-        "tick",
-        [t for t in range(0, 24000, 137) if not (1000 <= t <= 11000)],
-    )
-    def test_kelvin_is_none_outside_the_colortemp_range(self, tick):
-        # Every other segment has at least one None-kelvin endpoint, so
-        # PLAN.md 7.1 says the whole segment is RGB: kelvin=None.
-        assert sky_at_tick(tick).kelvin is None
-
-    def test_kelvin_present_mid_segment_between_1000_and_11000(self):
-        state = sky_at_tick(3500)
-        assert state.kelvin is not None
-        # between 5200 (t=1000) and 6500 (t=6000)
-        assert 5200 < state.kelvin < 6500
+    def test_daytime_is_distinctly_blue(self, tick):
+        # The whole point of the 2026-09-13 retune: daytime must read as
+        # blue, not washed-out white — require a real gap between the blue
+        # channel and the others, not just "blue happens to be highest".
+        r, g, b = sky_at_tick(tick).rgb
+        assert b > r + 40, f"tick {tick}: rgb={(r, g, b)} isn't saturated enough to read as blue"
 
 
 # --- Task 2.7: continuity sweep, M4 -----------------------------------------
@@ -95,8 +81,8 @@ class TestContinuity:
         original = copy.deepcopy(_sm.KEYFRAMES)
         original_ticks = list(_sm._KEYFRAME_TICKS)
         try:
-            tick, rgb, brightness, kelvin = _sm.KEYFRAMES[6]  # tick 13800
-            _sm.KEYFRAMES[6] = (tick, (255, 255, 255), brightness, kelvin)
+            tick, rgb, brightness = _sm.KEYFRAMES[6]  # tick 13800
+            _sm.KEYFRAMES[6] = (tick, (255, 255, 255), brightness)
 
             prev = _sm.sky_at_tick(13800 - 400)
             cur = _sm.sky_at_tick(13800)
@@ -116,30 +102,13 @@ class TestWeather:
         weathered = apply_weather(sky, rain=0.0, thunder=0.0, lightning=0)
         assert weathered.rgb == sky.rgb
         assert weathered.brightness == pytest.approx(sky.brightness)
-        assert weathered.kelvin == pytest.approx(sky.kelvin)
         assert weathered.flash is False
 
-    def test_full_rain_desaturates_toward_slate_and_forces_rgb(self):
-        sky = sky_at_tick(6000)  # noon, has a kelvin
+    def test_full_rain_desaturates_toward_slate(self):
+        sky = sky_at_tick(6000)  # noon
         weathered = apply_weather(sky, rain=1.0, thunder=0.0, lightning=0)
-        assert weathered.kelvin is None
         # moved toward slate (105, 118, 135), not left untouched
         assert weathered.rgb != sky.rgb
-
-    def test_light_rain_below_threshold_keeps_colortemp_path(self):
-        sky = sky_at_tick(6000)
-        weathered = apply_weather(sky, rain=0.1, thunder=0.0, lightning=0)
-        assert weathered.kelvin is not None
-
-    def test_rain_above_threshold_forces_rgb(self):
-        sky = sky_at_tick(6000)
-        weathered = apply_weather(sky, rain=0.31, thunder=0.0, lightning=0)
-        assert weathered.kelvin is None
-
-    def test_thunder_above_threshold_forces_rgb(self):
-        sky = sky_at_tick(6000)
-        weathered = apply_weather(sky, rain=0.0, thunder=0.11, lightning=0)
-        assert weathered.kelvin is None
 
     def test_rain_and_thunder_scale_brightness_down(self):
         sky = sky_at_tick(6000)
@@ -151,7 +120,6 @@ class TestWeather:
         weathered = apply_weather(sky, rain=0.8, thunder=0.8, lightning=3)
         assert weathered.flash is True
         assert weathered.rgb == (255, 250, 235)
-        assert weathered.kelvin is None
 
 
 # --- Task 2.5: exposure and cave blend --------------------------------------
@@ -163,7 +131,6 @@ class TestExposure:
         blended = apply_exposure(weathered, sky_light=15, block_light=0)
         assert blended.rgb == weathered.rgb
         assert blended.brightness == pytest.approx(weathered.brightness)
-        assert blended.kelvin == pytest.approx(weathered.kelvin)
 
     def test_unlit_cave_is_brightness_zero(self):
         weathered = apply_weather(sky_at_tick(6000), rain=0.0, thunder=0.0, lightning=0)
@@ -175,18 +142,6 @@ class TestExposure:
         blended = apply_exposure(weathered, sky_light=0, block_light=15)
         assert blended.rgb == (255, 147, 41)
         assert blended.brightness == pytest.approx(18.0)
-        assert blended.kelvin is None
-
-    def test_low_exposure_forces_rgb_even_with_a_colortemp_sky(self):
-        weathered = apply_weather(sky_at_tick(6000), rain=0.0, thunder=0.0, lightning=0)
-        assert weathered.kelvin is not None
-        blended = apply_exposure(weathered, sky_light=10, block_light=8)  # exposure ~0.67
-        assert blended.kelvin is None
-
-    def test_high_exposure_keeps_colortemp_path(self):
-        weathered = apply_weather(sky_at_tick(6000), rain=0.0, thunder=0.0, lightning=0)
-        blended = apply_exposure(weathered, sky_light=15, block_light=0)  # exposure 1.0
-        assert blended.kelvin is not None
 
     def test_partial_exposure_blends_between_torch_and_sky(self):
         weathered = apply_weather(sky_at_tick(6000), rain=0.0, thunder=0.0, lightning=0)
@@ -206,13 +161,11 @@ class TestDimensions:
         state = resolve({"tick": 6000, "dimension": "minecraft:the_nether"})
         assert state.rgb == (190, 62, 28)
         assert state.brightness == pytest.approx(30)
-        assert state.kelvin is None
 
     def test_end_override(self):
         state = resolve({"tick": 6000, "dimension": "minecraft:the_end"})
         assert state.rgb == (58, 30, 82)
         assert state.brightness == pytest.approx(11)
-        assert state.kelvin is None
 
     def test_nether_ignores_weather_and_exposure(self):
         a = resolve({
