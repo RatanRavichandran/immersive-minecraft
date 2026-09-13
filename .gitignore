@@ -4,6 +4,7 @@ __pycache__/
 *.pyc
 *.egg-info/
 .pytest_cache/
+bridge/bridge.log
 
 # Gradle / Fabric
 mod/.gradle/

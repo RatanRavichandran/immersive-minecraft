@@ -18,6 +18,8 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import sys
+from pathlib import Path
 
 import config
 from bulb import BulbDriver, WizBulb
@@ -25,6 +27,12 @@ from listener import start_listener
 from skymodel import resolve
 
 logger = logging.getLogger(__name__)
+
+# Always logged to a file, not just stderr: this is meant to be launchable
+# under pythonw.exe with no console at all (see the Windows Startup
+# shortcut for auto-starting at login), and sys.stderr can be None there —
+# writing to it would crash the bridge on its very first log line.
+LOG_PATH = Path(__file__).resolve().parent / "bridge.log"
 
 SIMULATED_DAY_SECONDS = 30.0
 SIMULATED_TICKS_PER_SECOND = 24000 / SIMULATED_DAY_SECONDS  # ~800 ticks/sec
@@ -146,7 +154,7 @@ def main() -> None:
     if args.no_bulb and not args.simulate:
         parser.error("--no-bulb only makes sense together with --simulate")
 
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    _configure_logging()
 
     try:
         if args.simulate:
@@ -155,6 +163,24 @@ def main() -> None:
             asyncio.run(run_listener())
     except KeyboardInterrupt:
         logger.info("stopped")
+    except Exception:
+        # Running under pythonw.exe (the Startup-folder auto-launch) there
+        # is no console for an unhandled traceback to land on — log it
+        # explicitly so a crash is at least visible in bridge.log rather
+        # than just silently going quiet.
+        logger.exception("bridge crashed")
+        raise
+
+
+def _configure_logging() -> None:
+    handlers: list[logging.Handler] = [logging.FileHandler(LOG_PATH, encoding="utf-8")]
+    if sys.stderr is not None:
+        handlers.append(logging.StreamHandler(sys.stderr))
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        handlers=handlers,
+    )
 
 
 if __name__ == "__main__":
