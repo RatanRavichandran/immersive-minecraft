@@ -373,10 +373,18 @@ Include the 24000 to 0 wrap. This catches keyframe typos and wrap bugs with no
 bulb and no running game.
 
 **Acceptance criteria:**
-- [ ] Full 0–24000 sweep passes the adjacent-delta assertion
-- [ ] Wrap boundary is explicitly asserted, not just implied
-- [ ] A deliberately corrupted keyframe makes the test fail (verify the test
+- [x] Full 0–24000 sweep passes the adjacent-delta assertion
+- [x] Wrap boundary is explicitly asserted, not just implied
+- [x] A deliberately corrupted keyframe makes the test fail (verify the test
       actually bites)
+
+**Status: done, 226 tests total across the bridge.** The sweep caught a real
+bug on its first run: at tick 11000 exactly — the shared boundary between
+the kelvin segment `[6000,11000]` and the forced-RGB segment `[11000,12000]`
+— interpolating via "which segment starts here" silently picked the RGB
+segment and dropped that keyframe's own `kelvin=5000`. Fixed by looking up
+an exact keyframe tick directly rather than interpolating into it; see
+`skymodel.sky_at_tick`'s docstring.
 
 **Verification:** `pytest tests/test_skymodel.py`
 
@@ -392,15 +400,35 @@ target, skips identical payloads, exempts lightning from both easing and
 dedupe, and tracks on/off so `turn_off()` fires once at the transition.
 
 **Acceptance criteria:**
-- [ ] Never exceeds `SEND_HZ` sends per second under any input
-- [ ] Eased value is rounded to integer raw units **before** the dedupe
+- [x] Never exceeds `SEND_HZ` sends per second under any input
+- [x] Eased value is rounded to integer raw units **before** the dedupe
       comparison, and snaps to target when within 1 unit — otherwise float
       easing never converges and dedupe never fires
-- [ ] `turn_off()` fires exactly once on the lit-to-dark transition
-- [ ] RGB path uses `rgbww=` with the achromatic component split into both
+- [x] `turn_off()` fires exactly once on the lit-to-dark transition
+- [x] RGB path uses `rgbww=` with the achromatic component split into both
       white channels, not `rgb=` — see M0 finding 4. Storm slate must read
       neutral, not warm
-- [ ] `updateState()` results are unwrapped for the 0.6.6 list return type
+- [x] `updateState()` results are unwrapped for the 0.6.6 list return type
+      (only needed in ad-hoc live checks; the driver itself never calls it)
+
+**Status: done, 20 unit tests + a live smoke test against the real bulb.**
+Two real bugs the tests caught, worth keeping in mind if this gets touched:
+
+1. **`_last_sent` must start as `None`, not "assume off".** It's tempting
+   to initialize it to the off payload on the theory that a fresh driver
+   probably faces a fresh-off bulb. Don't — the physical bulb's actual
+   state at startup is unknown (could be on from a previous run), and
+   dedupe against a guess means the first real command might silently
+   never send. First call after construction must always go out.
+2. **Dedupe has to compare the wire-quantized value, not the raw float.**
+   `PilotBuilder(brightness=X)` runs `X` through pywizlight's own
+   `hex_to_percent` (0-255 → 0-100) before it becomes the wire `dimming`
+   field. Comparing pre-quantization raw values for dedupe means several
+   genuinely-different internal values near the end of an ease — which all
+   round to the identical wire byte — each trigger a real send. Harmless
+   (rule 1's rate ceiling still holds), but it's exactly the redundant
+   traffic dedupe exists to prevent on a settled scene. Fixed by comparing
+   `hex_to_percent(raw_brightness)` instead of `raw_brightness` directly.
 
 **Verification:** unit test with a mocked bulb asserting send count and payload
 sequence. Then manually: bridge alone, feeding synthetic packets.
@@ -416,9 +444,16 @@ the full pipeline in ~30 seconds with no Minecraft running, driving the real
 bulb. Optional `--no-bulb` prints the resolved colour table instead.
 
 **Acceptance criteria:**
-- [ ] `python -m bridge.main --simulate` runs a full day in ~30s
-- [ ] Respects the rate limiter — no bulb lockup
-- [ ] `--no-bulb` works with no bulb present
+- [x] `python main.py --simulate` (run from inside bridge/, matching how
+      config/skymodel/bulb are imported everywhere else in this project —
+      not `python -m bridge.main`, which would need bridge/ to be a real
+      package with adjusted imports) runs a full day in ~30s
+- [x] Respects the rate limiter — no bulb lockup
+- [x] `--no-bulb` works with no bulb present
+
+Verified live against the real bulb 2026-09-13: both a `--no-bulb` dry run
+and a real-bulb run completed a full simulated day in ~30-39s with no
+errors and no lockup.
 
 **Verification:** run it; watch the bulb walk a day in half a minute.
 
