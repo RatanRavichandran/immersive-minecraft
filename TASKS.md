@@ -213,11 +213,23 @@ targeting MC 1.21.x + JDK 21. Mod id `skysync`, package `com.ratan.skysync`,
 **client entrypoint only** — no server entrypoint, no mixins yet.
 
 **Acceptance criteria:**
-- [ ] `./gradlew build` succeeds
-- [ ] `./gradlew runClient` opens Minecraft to the title screen with skysync loaded
-- [ ] `fabric.mod.json` declares only `client` under `entrypoints`
+- [x] `./gradlew build` succeeds
+- [x] `./gradlew runClient` opens Minecraft to the title screen with skysync loaded
+- [x] `fabric.mod.json` declares only `client` under `entrypoints`
 
-**Verification:** dev client log contains the skysync mod id at startup.
+**Status: done 2026-09-13.** The cloned template's plugin id
+(`net.fabricmc.fabric-loom`) turned out to map to Loom's *no-remap*
+implementation class, which never registers the `mappings` configuration
+at all — `mappings "net.fabricmc:yarn:...:v2"` failed with "no such
+method". Switched to `net.fabricmc.fabric-loom-remap` (full Yarn remap)
+and `modImplementation` for fabric-loader/fabric-api (plain
+`implementation` left the client source set without Minecraft's
+client-only classes on its compile classpath — `MinecraftClient` failed
+to resolve). See the mod build commit for the full diagnosis.
+
+**Verification:** dev client log contains the skysync mod id at startup —
+confirmed: `[Render thread/INFO] (skysync) [SkySync] initialized...` and
+`skysync 1.0.0` listed among loaded mods.
 
 **Dependencies:** 0.1. **Scope:** S (generated).
 
@@ -231,12 +243,12 @@ string to `127.0.0.1:25566`. No game state read yet — this task exists purely
 to isolate networking problems from modelling problems (PLAN.md §5.4).
 
 **Acceptance criteria:**
-- [ ] Fires every 10 ticks, not every tick
-- [ ] Socket is created once, never per-send
-- [ ] Whole send is wrapped in `catch (Throwable)` — a lighting toy must never
+- [x] Fires every 10 ticks, not every tick
+- [x] Socket is created once, never per-send
+- [x] Whole send is wrapped in `catch (Throwable)` — a lighting toy must never
       stall or crash the render thread (PLAN.md §11)
 
-**Verification:** covered by the transport checkpoint below.
+**Verification:** covered by the transport checkpoint below. Done.
 
 **Dependencies:** 1.1. **Scope:** S. **Files:** 1–2 Java files.
 
@@ -279,13 +291,18 @@ datagrams are logged and dropped, never raised.
 
 ---
 
-### CHECKPOINT: Transport — M2 (PLAN.md §5.4 gate)
+### CHECKPOINT: Transport — M2 (PLAN.md §5.4 gate) — **PASSED 2026-09-13**
 
 Run `./gradlew runClient` and the bridge together.
 
-- [ ] Placeholder packets print in the bridge terminal at roughly 2 Hz
-- [ ] Rate is steady; no bursts, no gaps
-- [ ] Closing Minecraft stops the packets; the bridge keeps running cleanly
+- [x] Placeholder packets print in the bridge terminal at roughly 2 Hz —
+      confirmed rock-steady 0.5s spacing across 175+ consecutive packets
+- [x] Rate is steady; no bursts, no gaps
+- [x] Closing Minecraft stops the packets; the bridge keeps running cleanly —
+      confirmed the bridge still answered a manual packet afterward
+
+Also confirmed the mod actually loaded, not just that Minecraft started:
+`logs` show `skysync 1.0.0` in the mod list and its own init log line.
 
 **Do not proceed past this point until it works.** Everything after assumes
 the pipe is sound.
