@@ -1,0 +1,24 @@
+{
+	"schemaVersion": 1,
+	"id": "skysync",
+	"version": "${version}",
+	"name": "Sky Sync",
+	"description": "Mirrors the Minecraft sky onto a smart bulb in real time. Reads game state each tick and emits it over local UDP; does nothing on its own. Client-side only.",
+	"authors": [
+		"ratan"
+	],
+	"license": "MIT",
+	"icon": "assets/skysync/icon.png",
+	"environment": "client",
+	"entrypoints": {
+		"client": [
+			"com.ratan.skysync.client.SkySyncClient"
+		]
+	},
+	"depends": {
+		"fabricloader": ">=0.19.5",
+		"minecraft": "~1.21.1",
+		"java": ">=21",
+		"fabric-api": "*"
+	}
+}
