@@ -20,3 +20,8 @@ mod/run/
 # OS
 Thumbs.db
 .DS_Store
+
+# Internal working docs — not part of the public repo
+/PLAN.md
+/TASKS.md
+/SETUP.md
