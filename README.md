@@ -175,16 +175,3 @@ minecraft-sky-sync/
     └── tests/
 ```
 
-## Status
-
-Working end to end: real-time telemetry, daylight cycle, sky exposure and
-cave blending, dimension overrides, lightning flashes. Verified live
-against actual hardware, not just unit tests.
-
-Not done yet:
-
-- [ ] No packaged Minecraft instance — always run via `./gradlew runClient`
-- [ ] Weather and cave behaviour confirmed live for time-of-day; a full
-      thunderstorm and an unlit-cave walkthrough haven't been watched live yet
-- [ ] No calibration pass in the actual room the light sits in — current
-      brightness and saturation values are a reasonable first pass, not measured
