@@ -41,7 +41,11 @@ class TestKeyframes:
         # blue, not washed-out white — require a real gap between the blue
         # channel and the others, not just "blue happens to be highest".
         r, g, b = sky_at_tick(tick).rgb
-        assert b > r + 40, f"tick {tick}: rgb={(r, g, b)} isn't saturated enough to read as blue"
+        # Bar raised 2026-09-14 alongside the second blue retune (true
+        # minimum across the daytime span is ~160 at the current values;
+        # 120 leaves headroom for a modest future adjustment either way
+        # while still catching a regression back toward the old ~105 gap).
+        assert b > r + 120, f"tick {tick}: rgb={(r, g, b)} isn't saturated enough to read as blue"
 
 
 # --- Task 2.7: continuity sweep, M4 -----------------------------------------

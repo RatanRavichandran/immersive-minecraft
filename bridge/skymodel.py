@@ -60,20 +60,18 @@ def _lerp_rgb(a: Rgb, b: Rgb, t: float) -> Rgb:
 # tick 0 — it exists so the wrap is just another segment, not a special
 # case.
 #
-# The daytime span (1000-11000) was retuned 2026-09-13: the original values
-# here (205,228,255) / (175,212,255) / (200,215,255) are so close to white
-# (a ~50-unit gap between the highest and lowest channel) that they read as
-# pale white-ish on an RGB LED rather than sky blue — a colour this
-# desaturated needs the extra lumens of a dedicated white LED to look
-# intentional, which is exactly the channel this file no longer uses. The
-# new values keep the same brightening-then-warming arc but roughly double
-# the blue/red channel gap so the hue actually reads as blue. Revisit
-# during Task 3.5 calibration if it's too saturated for the room.
+# The daytime span (1000-11000) has been retuned toward blue twice now.
+# Original (205,228,255)/(175,212,255)/(200,215,255) had only a ~50-unit
+# gap between the highest and lowest channel — read as pale white-ish on
+# an RGB LED, not sky blue. 2026-09-13 roughly doubled that gap. Still not
+# blue enough per 2026-09-14 feedback, so R and G were both cut further
+# here, pushing the blue/red gap past 160 at every daytime keyframe (was
+# ~110). Revisit during Task 3.5 calibration if it's too saturated now.
 KEYFRAMES: list[tuple[int, Rgb, float]] = [
     (0, (255, 140, 60), 22),  # first light
-    (1000, (150, 195, 255), 78),  # day begins
-    (6000, (80, 160, 255), 100),  # noon — peak sky blue
-    (11000, (140, 185, 250), 80),  # late afternoon, warming back down
+    (1000, (90, 160, 255), 78),  # day begins
+    (6000, (40, 130, 255), 100),  # noon — peak sky blue
+    (11000, (85, 155, 250), 80),  # late afternoon, warming back down
     (12000, (255, 152, 66), 50),  # sunset
     (12800, (196, 84, 92), 20),  # last red
     (13800, (38, 48, 120), 8),  # night, mobs spawn

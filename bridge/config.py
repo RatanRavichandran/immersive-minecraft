@@ -24,12 +24,16 @@ LISTEN_PORT = 25566
 # original 30/185/130. That undoes some of the original 255-is-uncomfortable
 # margin PLAN.md section 8 built in — if RAW_MAX starts feeling too hot for
 # the room, that margin is the first thing to give back, not RAW_MIN.
+# RAW_MIN alone was bumped another +30% on 2026-09-14 ("increase the min
+# brightness by 30%... without tinkering with white blend") — night/cave
+# brightness was reading too dim after WHITE_MIX dropped to 0.0, and this
+# raises the floor directly rather than reopening that knob.
 
 # Night / unlit-cave floor, in pywizlight's 0-255 raw brightness units.
 # This is a HARDWARE FLOOR, not taste: WiZ ignores brightness below
 # roughly 25, so anything lower just reads as off. Do not "clean this up"
 # to 0 — it will make the midnight and cave states silently do nothing.
-RAW_MIN = 39
+RAW_MIN = 51
 
 # Noon brightness, out of 255. Tune this first, before any keyframe colour.
 RAW_MAX = 240
