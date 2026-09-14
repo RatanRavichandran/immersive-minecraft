@@ -56,13 +56,17 @@ def percent_to_raw(percent: float, *, flash: bool) -> int:
     return int(round(max(0.0, min(255.0, raw))))
 
 
-def split_white(r: int, g: int, b: int) -> tuple[int, int, int, int]:
-    """Pull the achromatic component out of an RGB triple so both white
-    channels get it evenly. See TASKS.md M0 finding 4: PilotBuilder(rgb=...)
-    drives warm white only and leaves cold white at 0, so every desaturated
-    colour skews warm. An explicit even split keeps storm slate neutral.
+def split_white(r: int, g: int, b: int, *, mix: float = 1.0) -> tuple[int, int, int, int]:
+    """Pull a fraction of the achromatic component out of an RGB triple and
+    put it into both white channels evenly. ``mix`` is config.WHITE_MIX —
+    0.0 keeps everything on the (weaker) colour LEDs for accurate,
+    saturated hue; 1.0 borrows the full min(r,g,b) from the (much
+    stronger) white LEDs for extra brightness at the cost of saturation.
+    See config.py's WHITE_MIX for the full reasoning and the M0 finding
+    (PilotBuilder(rgb=...) drives warm white only, skewing everything
+    warm) that motivated splitting evenly rather than not at all.
     """
-    w = min(r, g, b)
+    w = round(min(r, g, b) * mix)
     return (r - w, g - w, b - w, w)
 
 
@@ -177,7 +181,7 @@ class BulbDriver:
             return False  # rule 1 — a hard ceiling, applies even to flashes
 
         if payload.on:
-            r, g, b, w = split_white(*payload.rgb)
+            r, g, b, w = split_white(*payload.rgb, mix=config.WHITE_MIX)
             pilot = PilotBuilder(rgbww=(r, g, b, w, w), brightness=payload.raw_brightness)
             await self._bulb.turn_on(pilot)
         else:

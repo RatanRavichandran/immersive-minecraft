@@ -51,3 +51,24 @@ SEND_HZ = 2.0
 # Raise this before adding any cave-specific special case (PLAN.md
 # section 7.3 / TASKS.md Task 3.3).
 EASE = 0.22
+
+# How much of an RGB colour's shared white component gets mixed into the
+# bulb's cold/warm white LEDs, 0-1. 0.0 = pure colour, drive R/G/B alone.
+# 1.0 = the old behaviour, split the full min(r,g,b) evenly into both white
+# channels.
+#
+# Set to 0.0 on 2026-09-14 per user feedback ("these don't seem too
+# vibrant... okay with darker shades"). The bulb's own hardware report
+# gives the reason: colour LED drive current is roughly a third of white
+# LED drive current (R=10mA, G=8mA, B=6mA vs C=23mA, W=22mA), so even a
+# modest white contribution punches far above its numeric weight and
+# washes out saturation — noon blue (80,160,255) was being sent as
+# rgbww=(0,80,175,80,80), and that (80,80) of white diluted it badly.
+# Pure colour means less total brightness (no "free" lumens borrowed from
+# the much-stronger white LEDs) in exchange for accurate, saturated hue —
+# exactly the trade that was asked for. Raise this back up if colours ever
+# end up feeling too dim rather than too pale; storm slate in particular
+# was the original reason a nonzero value existed (PLAN.md section 7.2 —
+# pywizlight's own rgb= path skews warm without an even white split, this
+# is what keeps a fully-desaturated grey neutral instead).
+WHITE_MIX = 0.0

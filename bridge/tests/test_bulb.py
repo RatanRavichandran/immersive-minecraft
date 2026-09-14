@@ -59,9 +59,19 @@ class TestPureHelpers:
         assert percent_to_raw(100, flash=True) == config.FLASH_MAX
 
     def test_split_white_pulls_the_shared_minimum_into_white(self):
-        assert split_white(105, 118, 135) == (0, 13, 30, 105)
-        assert split_white(255, 147, 41) == (214, 106, 0, 41)
-        assert split_white(10, 10, 10) == (0, 0, 0, 10)
+        # mix=1.0 (the old default): full min(r,g,b) borrowed evenly.
+        assert split_white(105, 118, 135, mix=1.0) == (0, 13, 30, 105)
+        assert split_white(255, 147, 41, mix=1.0) == (214, 106, 0, 41)
+        assert split_white(10, 10, 10, mix=1.0) == (0, 0, 0, 10)
+
+    def test_split_white_mix_zero_is_pure_colour(self):
+        # config.WHITE_MIX's current value (2026-09-14): no white borrowed
+        # at all, full saturation on the colour LEDs alone.
+        assert split_white(105, 118, 135, mix=0.0) == (105, 118, 135, 0)
+        assert split_white(80, 160, 255, mix=0.0) == (80, 160, 255, 0)
+
+    def test_split_white_mix_is_proportional(self):
+        assert split_white(100, 100, 100, mix=0.5) == (50, 50, 50, 50)
 
 
 # --- rule 1: hard rate ceiling ------------------------------------------------
@@ -120,7 +130,7 @@ class TestEasing:
         assert await driver.update(target, now=0.0) is True
         _, params = bulb.calls[-1]
         assert params["dimming"] == wire_dimming(percent_to_raw(80, flash=False))
-        r, g, b, w = split_white(80, 160, 255)
+        r, g, b, w = split_white(80, 160, 255, mix=config.WHITE_MIX)
         assert (params["r"], params["g"], params["b"], params["c"], params["w"]) == (r, g, b, w, w)
 
     @pytest.mark.asyncio
@@ -155,7 +165,7 @@ class TestEasing:
         await driver.update(rgb_state(50, (80, 160, 255)), now=t)  # jump to noon blue
         _, params = bulb.calls[-1]
         # still mid-ease toward the new colour, not already arrived
-        r, g, b, w = split_white(80, 160, 255)
+        r, g, b, w = split_white(80, 160, 255, mix=config.WHITE_MIX)
         assert (params["r"], params["g"], params["b"], params["c"], params["w"]) != (r, g, b, w, w)
 
 
