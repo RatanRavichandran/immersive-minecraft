@@ -1,4 +1,4 @@
-# Minecraft Sky Sync
+# Immersive Minecraft
 
 Mirrors the Minecraft (Java Edition) sky onto a WiZ Colors smart light in real
 time. Daylight cycle, weather, cave lighting, and dimension all drive the
